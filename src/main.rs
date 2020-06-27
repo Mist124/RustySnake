@@ -1,10 +1,7 @@
 #![allow(dead_code)]
 mod lib;
 use lib::game_items::GameItems::*;
-use std::{
-    io::{stdin, stdout, Write},
-    thread, time,
-};
+use std::{thread, time};
 extern crate crossterm;
 use crossterm::event::{read, Event};
 
@@ -71,7 +68,6 @@ fn main() -> std::io::Result<()> {
         if elapsed_time.as_nanos() < 33_333_333 {
             thread::sleep(time::Duration::from_nanos(33_333_333) - elapsed_time);
         }
-        lib::draw::
     }
     lib::draw::end();
     Ok(())
