@@ -14,11 +14,29 @@ pub enum Input {
     Quit,
     D(Direction),
 }
-
-#[derive(Debug)]
+/*
+pub enum TailSegment {
+    Def, // default: []
+    End(Direction), /*
+         Left:   [=
+         Right:  =]
+         Up:     TT
+         Down:   L/
+              */
+    Middle(u8), /* the different kinds of tailsegments:
+                0:  ./
+                1:  \.
+                2:  /'                    }0=='\
+                3:  '\                        ||
+                4:  ||                      /'./
+                5:  ==                      \.=]
+                */
+}
+*/
+#[derive(Debug, Clone, Copy)]
 pub enum GameItems {
     Apple,
-    SnakeTail,
+    SnakeTailSegment, // todo: implement different types of segments (began implementing that above)
     SnakeHead(Direction),
     Empty,
 }
@@ -29,13 +47,13 @@ impl fmt::Display for GameItems {
             f,
             "{}",
             match self {
-                GameItems::Empty => "..",
+                GameItems::Empty => "  ",
                 GameItems::Apple => "()",
-                GameItems::SnakeTail => "[]",
+                GameItems::SnakeTailSegment => "[]",
                 GameItems::SnakeHead(d) => match d {
-                    Direction::Right => "O<",
+                    Direction::Right => "0{",
                     Direction::Down => "/\\",
-                    Direction::Left => ">O",
+                    Direction::Left => "}0",
                     Direction::Up => "\\/",
                 },
             }
@@ -53,13 +71,24 @@ fn end() {
 
 fn render(screen: &[Vec<GameItems>], fc: u32) -> io::Result<()> {
     let mut result = String::from("");
+    result.push_str(" .");
+    for _ in 0..screen[0].len() {
+        result.push_str(",.")
+    }
+    result.push_str(",\n");
     for i in screen {
+        result.push_str(" ¦");
         for j in i {
             result.push_str(&format!("{}", j));
         }
 
-        result.push_str("\n");
+        result.push_str("¦\n");
     }
+    result.push_str(" ¨");
+    for _ in 0..screen[0].len() {
+        result.push_str("\"¨")
+    }
+    result.push_str("\"\n");
     result.push_str(&format!("{}\n", fc));
     print!("\x1B[0;0H{}", result);
     io::stdout().flush()?;
@@ -95,34 +124,32 @@ fn handle_keyevent(event: crossterm::event::Event) -> Option<Input> {
     }
 }
 
+fn reset_screen(s: &[Vec<GameItems>]) -> Vec<Vec<GameItems>> {
+    let h = s.len();
+    let w = s[0].len();
+    vec![vec![GameItems::Empty; w]; h]
+}
+
 pub fn game() -> std::io::Result<()> {
-    use crossterm::event::{read, Event};
+    use crossterm::event::read;
     use std::sync::mpsc;
-    use std::thread;
     use GameItems::*;
     init();
 
-    let width = 17;
-    let height = 32;
-    let fps = 10_f32;
-    let nanos = (1_f32 / fps * 1_000_000_000_f32) as u128;
+    let width = 48;
+    let height = 24;
+    let fps = 15_f64;
+    let nanos = (1_f64 / fps * 1_000_000_000_f64) as u128;
     let mut snake_tail: Vec<(usize, usize)> = vec![];
     let mut snake_head = (height / 2, width / 2);
     let mut direction = Direction::Up;
-    let mut screen = vec![];
-
-    for _ in 0..height {
-        let mut line = vec![];
-        for _ in 0..width {
-            line.push(Empty);
-        }
-        screen.push(line);
-    }
+    let mut screen = vec![vec![Empty; width]; height];
 
     let mut frame_count = 0_u32;
     let mut frame_start: time::Instant;
     let mut elapsed_time: time::Duration;
 
+    // multithreaded input loop
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || loop {
         let input = handle_keyevent(read().unwrap());
@@ -150,17 +177,24 @@ pub fn game() -> std::io::Result<()> {
         };
 
         // Todo: game logic
+        snake_tail.push(snake_head);
+        if snake_tail.len() > 10 {
+            snake_tail.remove(0);
+        }
         snake_head = match direction {
             Direction::Right => (snake_head.0, snake_head.1 + 1),
             Direction::Left => (snake_head.0, snake_head.1 - 1),
             Direction::Down => (snake_head.0 + 1, snake_head.1),
             Direction::Up => (snake_head.0 - 1, snake_head.1),
         };
+        for i in &snake_tail {
+            screen[i.0][i.1] = GameItems::SnakeTailSegment;
+        }
         screen[snake_head.0][snake_head.1] = SnakeHead(direction);
 
-        render(&screen[..], frame_count)?;
+        render(&screen, frame_count)?;
         // println!("{:?}", direction);
-        screen[snake_head.0][snake_head.1] = Empty;
+        screen = reset_screen(&screen);
         // if frame_count == 100 {
         //     break;
         // }
