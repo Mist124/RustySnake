@@ -136,11 +136,14 @@ pub fn game() -> std::io::Result<()> {
     use GameItems::*;
     use rand::Rng;
     init();
-
+    
+    // -- Configuration --
     let width = 48;
     let height = 24;
     let fps = 10_f64;
     let nanos = (1_f64 / fps * 1_000_000_000_f64) as u128;
+
+    // -- Game Variables --
     let mut snake_tail: Vec<(usize, usize)> = vec![];
     let mut snake_len = 10_u32;
     let mut score = 0_u32;
