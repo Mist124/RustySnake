@@ -15,7 +15,7 @@ pub enum Input {
     D(Direction),
 }
 /*
-pub enum TailSegment {
+pub enum Segment {
     Def, // default: []
     End(Direction), /*
          Left:   [=
@@ -23,13 +23,13 @@ pub enum TailSegment {
          Up:     TT
          Down:   L/
               */
-    Middle(u8), /* the different kinds of tailsegments:
-                0:  ./
-                1:  \.
-                2:  /'                    }0=='\
-                3:  '\                        ||
-                4:  ||                      /'./
-                5:  ==                      \.=]
+    Middle(bool, Direction), /* the different kinds of tailsegments:
+                0, Left:  ./
+                0, Up:  \.
+                0, Right:  /'                    }0=='\
+                0, Down:  '\                        ||
+                1, Up/Down:  ||                      /'./
+                1, Right/Left:  ==                      \.=]
                 */
 }
 */
@@ -69,7 +69,7 @@ fn end() {
     print!("\x1B[?25h"); // show cursor
 }
 
-fn render(screen: &[Vec<GameItems>], fc: u32) -> io::Result<()> {
+fn render(screen: &[Vec<GameItems>], score: u32) -> io::Result<()> {
     let mut result = String::from("");
     result.push_str(" .");
     for _ in 0..screen[0].len() {
@@ -89,7 +89,7 @@ fn render(screen: &[Vec<GameItems>], fc: u32) -> io::Result<()> {
         result.push_str("\"¨")
     }
     result.push_str("\"\n");
-    result.push_str(&format!("{}\n", fc));
+    result.push_str(&format!("score: {}\n", score));
     print!("\x1B[0;0H{}", result);
     io::stdout().flush()?;
 
@@ -134,18 +134,24 @@ pub fn game() -> std::io::Result<()> {
     use crossterm::event::read;
     use std::sync::mpsc;
     use GameItems::*;
+    use rand::Rng;
     init();
 
     let width = 48;
     let height = 24;
-    let fps = 15_f64;
+    let fps = 10_f64;
     let nanos = (1_f64 / fps * 1_000_000_000_f64) as u128;
     let mut snake_tail: Vec<(usize, usize)> = vec![];
+    let mut snake_len = 10_u32;
+    let mut score = 0_u32;
+    let mut collided: bool;
+    let mut rng = rand::thread_rng();
+    let mut apple = (rng.gen_range(0, height), rng.gen_range(0, width));
     let mut snake_head = (height / 2, width / 2);
     let mut direction = Direction::Up;
     let mut screen = vec![vec![Empty; width]; height];
 
-    let mut frame_count = 0_u32;
+    let mut _frame_count = 0_u32;
     let mut frame_start: time::Instant;
     let mut elapsed_time: time::Duration;
 
@@ -158,9 +164,9 @@ pub fn game() -> std::io::Result<()> {
         }
     });
 
-    loop {
+    'main: loop {
         frame_start = time::Instant::now();
-        frame_count += 1;
+        _frame_count += 1;
 
         // --- input ---
         ///// todo: implement this in multithreading because it is waiting for a keypress, which interrupts the gameloop
@@ -168,7 +174,7 @@ pub fn game() -> std::io::Result<()> {
             if let Input::D(d) = input {
                 d
             } else if let Input::Quit = input {
-                break;
+                break 'main;
             } else {
                 direction
             }
@@ -176,28 +182,34 @@ pub fn game() -> std::io::Result<()> {
             direction
         };
 
-        // Todo: game logic
+        // -- game logic --
         snake_tail.push(snake_head);
-        if snake_tail.len() > 10 {
+        if snake_tail.len() > snake_len as usize {
             snake_tail.remove(0);
         }
+
         snake_head = match direction {
-            Direction::Right => (snake_head.0, snake_head.1 + 1),
-            Direction::Left => (snake_head.0, snake_head.1 - 1),
-            Direction::Down => (snake_head.0 + 1, snake_head.1),
-            Direction::Up => (snake_head.0 - 1, snake_head.1),
+            Direction::Right => if snake_head.1 < width - 1 {(snake_head.0, snake_head.1 + 1)} else {break 'main;},
+            Direction::Left  => if snake_head.1 > 0 {(snake_head.0, snake_head.1 - 1)} else {break 'main;},
+            Direction::Down  => if snake_head.0 < height - 1 {(snake_head.0 + 1, snake_head.1)} else {break 'main;},
+            Direction::Up    => if snake_head.0 > 0 {(snake_head.0 - 1, snake_head.1)} else {break 'main;},
         };
+
+        collided = snake_head == apple;
+        snake_len = if collided {snake_len + 2} else {snake_len};
+        score = if collided {score + 1} else {score};
+        apple = if collided {(rng.gen_range(0, height), rng.gen_range(0, width))} else {apple};
+
+        // -- putting everything onto the screen --
+        screen[apple.0][apple.1] = Apple;
         for i in &snake_tail {
+            if i == &snake_head {break 'main;}
             screen[i.0][i.1] = GameItems::SnakeTailSegment;
         }
         screen[snake_head.0][snake_head.1] = SnakeHead(direction);
 
-        render(&screen, frame_count)?;
-        // println!("{:?}", direction);
+        render(&screen, score)?;
         screen = reset_screen(&screen);
-        // if frame_count == 100 {
-        //     break;
-        // }
         elapsed_time = frame_start.elapsed();
         if elapsed_time.as_nanos() < nanos {
             thread::sleep(time::Duration::from_nanos(nanos as u64) - elapsed_time);
