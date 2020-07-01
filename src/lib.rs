@@ -10,12 +10,38 @@ pub enum Direction {
     Down,
 }
 
+impl Direction {
+    fn opposite(&self) -> Direction {
+        use Direction::*;
+        match self {
+            Left => Right,
+            Right => Left,
+            Up => Down,
+            Down => Up,
+        }
+    }
+}
+
+impl PartialEq for Direction {
+    fn eq(&self, &other: &Direction) -> bool {
+        use Direction::*;
+        match (*self, other) {
+            (Left, Left) => true,
+            (Right, Right) => true,
+            (Up, Up) => true,
+            (Down, Down) => true,
+            _ => false,
+        }
+    }
+}
+
 pub enum Input {
     Quit,
     D(Direction),
 }
-/*
-pub enum Segment {
+
+#[derive(Debug, Clone, Copy)]
+pub enum SegmentType {
     Def, // default: []
     End(Direction), /*
          Left:   [=
@@ -23,38 +49,74 @@ pub enum Segment {
          Up:     TT
          Down:   L/
               */
-    Middle(bool, Direction), /* the different kinds of tailsegments:
-                0, Left:  ./
-                0, Up:  \.
-                0, Right:  /'                    }0=='\
-                0, Down:  '\                        ||
-                1, Up/Down:  ||                      /'./
-                1, Right/Left:  ==                      \.=]
+    Corner(Direction), /* the different kinds of tailsegments:
+                Left:   ./
+                Up:     \.
+                Right:  /'
+                Down:   '\
                 */
+    Straight(Direction), /*
+                Up/Down:    ||
+                Right/Left: ==
+    */
 }
-*/
+
+struct Segment {
+    position: (u32, u32),
+    kind: SegmentType,
+}
+
+impl Segment {
+    fn new(pos: (u32, u32)) -> Segment {
+        Segment { position: pos, kind: SegmentType::Def}
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum GameItems {
     Apple,
-    SnakeTailSegment, // todo: implement different types of segments (began implementing that above)
+    SnakeTailSegment(SegmentType), // todo: implement different types of segments (began implementing that above)
     SnakeHead(Direction),
     Empty,
 }
 
 impl fmt::Display for GameItems {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        use GameItems::*;
+        use SegmentType::*;
+        use Direction::*;
         write!(
             f,
             "{}",
             match self {
-                GameItems::Empty => "  ",
-                GameItems::Apple => "()",
-                GameItems::SnakeTailSegment => "[]",
+                Empty => "  ",
+                Apple => "()",
+                SnakeTailSegment(s) => match s {
+                    Def => "[]",
+                    End(d) => match d {
+                        Left => "[=",
+                        Right => "=]",
+                        Up => "TT",
+                        Down => "L/",
+                    },
+                    Corner(d) => match d {
+                        Left => "./",
+                        Up => "\\.",
+                        Right => "/'",
+                        Down => "'\\",
+                    },
+                    Straight(d) => match d {
+                        Down => "||",
+                        Up => "||",
+                        Right => "==",
+                        Left => "==",
+                    }
+                },
                 GameItems::SnakeHead(d) => match d {
-                    Direction::Right => "0{",
-                    Direction::Down => "/\\",
-                    Direction::Left => "}0",
-                    Direction::Up => "\\/",
+                    Right => "0{",
+                    Down => "/\\",
+                    Left => "}0",
+                    Up => "\\/",
                 },
             }
         )
@@ -67,6 +129,11 @@ fn init() {
 
 fn end() {
     print!("\x1B[?25h"); // show cursor
+}
+
+fn _update_snake(snake: &Vec<Segment>) -> &Vec<Segment> {
+    // todo: implement update function to generate the shape of the snake
+    snake
 }
 
 fn render(screen: &[Vec<GameItems>], score: u32) -> io::Result<()> {
@@ -138,21 +205,21 @@ pub fn game() -> std::io::Result<()> {
     init();
     
     // -- Configuration --
-    let width = 48;
-    let height = 24;
+    let width = 32;
+    let height = 16;
     let fps = 10_f64;
     let nanos = (1_f64 / fps * 1_000_000_000_f64) as u128;
 
     // -- Game Variables --
-    let mut snake_tail: Vec<(usize, usize)> = vec![];
+    let mut snake_tail: Vec<Segment> = vec![];
     let mut snake_len = 10_u32;
     let mut score = 0_u32;
     let mut collided: bool;
     let mut rng = rand::thread_rng();
     let mut apple = (rng.gen_range(0, height), rng.gen_range(0, width));
-    let mut snake_head = (height / 2, width / 2);
+    let mut snake_head = (height / 2 as u32, width / 2 as u32);
     let mut direction = Direction::Up;
-    let mut screen = vec![vec![Empty; width]; height];
+    let mut screen = vec![vec![Empty; width as usize]; height as usize];
 
     let mut _frame_count = 0_u32;
     let mut frame_start: time::Instant;
@@ -172,10 +239,13 @@ pub fn game() -> std::io::Result<()> {
         _frame_count += 1;
 
         // --- input ---
-        ///// todo: implement this in multithreading because it is waiting for a keypress, which interrupts the gameloop
         direction = if let Ok(input) = rx.try_recv() {
             if let Input::D(d) = input {
-                d
+                if d == direction.opposite() { // prevents you to eat yourself by going in the opposite direction your facing
+                    direction
+                } else {
+                    d
+                }
             } else if let Input::Quit = input {
                 break 'main;
             } else {
@@ -186,7 +256,7 @@ pub fn game() -> std::io::Result<()> {
         };
 
         // -- game logic --
-        snake_tail.push(snake_head);
+        snake_tail.push(Segment::new(snake_head));
         if snake_tail.len() > snake_len as usize {
             snake_tail.remove(0);
         }
@@ -204,13 +274,14 @@ pub fn game() -> std::io::Result<()> {
         apple = if collided {(rng.gen_range(0, height), rng.gen_range(0, width))} else {apple};
 
         // -- putting everything onto the screen --
-        screen[apple.0][apple.1] = Apple;
+        screen[apple.0 as usize][apple.1 as usize] = Apple;
         for i in &snake_tail {
-            if i == &snake_head {break 'main;}
-            screen[i.0][i.1] = GameItems::SnakeTailSegment;
+            if i.position == snake_head {break 'main;}
+            screen[i.position.0 as usize][i.position.1 as usize] = GameItems::SnakeTailSegment(SegmentType::Def);
         }
-        screen[snake_head.0][snake_head.1] = SnakeHead(direction);
+        screen[snake_head.0 as usize][snake_head.1 as usize] = SnakeHead(direction);
 
+        // rendering the screen and wait the rest of the time to get the desired framerate
         render(&screen, score)?;
         screen = reset_screen(&screen);
         elapsed_time = frame_start.elapsed();
